@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from catalog import (
+    AREA_MENU,
     CATEGORIES,
     CATEGORY_PARENT,
     COFFEE_AREA_MENU,
@@ -148,6 +149,34 @@ def coffee_area_keyboard() -> dict[str, Any]:
     return {"inline_keyboard": keyboard}
 
 
+def category_area_keyboard(
+    db: CatalogDB, category_slug: str
+) -> dict[str, Any]:
+    counts = db.category_area_counts(category_slug)
+    keyboard = [
+        [
+            callback_button(
+                f"🗺️ All Places · {db.category_count(category_slug)}",
+                f"area:{category_slug}:all",
+            )
+        ]
+    ]
+    keyboard.extend(
+        [
+            callback_button(
+                f"{COFFEE_AREAS[area]} · {counts[area]}",
+                f"area:{category_slug}:{area}",
+            )
+        ]
+        for area in AREA_MENU
+        if counts.get(area)
+    )
+    keyboard.append(
+        [callback_button("← Categories", back_callback(category_slug))]
+    )
+    return {"inline_keyboard": keyboard}
+
+
 def back_callback(category_slug: str) -> str:
     parent = CATEGORY_PARENT.get(category_slug)
     return f"group:{parent}" if parent else "menu"
@@ -205,6 +234,7 @@ class ChiangMaiBot:
         self.admin_user_id = admin_user_id
         self.user_state: dict[int, dict[str, Any]] = {}
         self.coffee_views: dict[int, dict[str, Any]] = {}
+        self.category_views: dict[int, dict[str, Any]] = {}
 
     def send(self, chat_id: int, text: str, **kwargs: Any) -> Any:
         return self.api.call(
@@ -427,6 +457,134 @@ class ChiangMaiBot:
             reply_markup=place_keyboard(place, category_slug, index, len(places)),
         )
 
+    def show_category_areas(
+        self, chat_id: int, message_id: int, category_slug: str
+    ) -> None:
+        if category_slug not in CATEGORIES:
+            self.show_menu(chat_id, message_id)
+            return
+        counts = self.db.category_area_counts(category_slug)
+        available = [area for area in AREA_MENU if counts.get(area)]
+        area_guide = "\n".join(
+            f"{COFFEE_AREAS[area]} — {COFFEE_AREA_DESCRIPTIONS[area]}"
+            for area in available
+        )
+        label = CATEGORIES[category_slug]["label"]
+        text = f"{label}\n\n<b>Choose an area:</b>"
+        if area_guide:
+            text += f"\n\n{area_guide}"
+        self.edit(
+            chat_id,
+            message_id,
+            text,
+            reply_markup=category_area_keyboard(self.db, category_slug),
+        )
+
+    def show_category_results(
+        self,
+        chat_id: int,
+        message_id: int | None,
+        user_id: int,
+        category_slug: str,
+        places: list[Any],
+        title: str,
+        *,
+        page: int = 0,
+    ) -> None:
+        self.category_views[user_id] = {
+            "category_slug": category_slug,
+            "places": [dict(place) for place in places],
+            "title": title,
+        }
+        self.show_category_page(chat_id, message_id, user_id, page)
+
+    def show_category_page(
+        self, chat_id: int, message_id: int | None, user_id: int, page: int
+    ) -> None:
+        view = self.category_views.get(user_id)
+        if not view:
+            self.show_menu(chat_id, message_id)
+            return
+        places = view["places"]
+        page_size = 8
+        total_pages = max(1, (len(places) + page_size - 1) // page_size)
+        page = max(0, min(page, total_pages - 1))
+        view["page"] = page
+        start = page * page_size
+        visible = places[start : start + page_size]
+        keyboard: list[list[dict[str, str]]] = []
+        if visible:
+            keyboard.extend(
+                [callback_button(self.coffee_row_text(place), f"place:{place['id']}")]
+                for place in visible
+            )
+            navigation: list[dict[str, str]] = []
+            if page > 0:
+                navigation.append(callback_button("← Previous", f"page:{page - 1}"))
+            if page + 1 < total_pages:
+                navigation.append(callback_button("Next →", f"page:{page + 1}"))
+            if navigation:
+                keyboard.append(navigation)
+            text = (
+                f"{view['title']}\n\n"
+                "Tap a place to see details and open it in Google Maps."
+            )
+            if total_pages > 1:
+                text += f"\n\n<i>Page {page + 1} of {total_pages}</i>"
+        else:
+            text = f"{view['title']}\n\nNo places here yet."
+        keyboard.append(
+            [
+                callback_button(
+                    "← Areas", f"cat:{view['category_slug']}:0"
+                )
+            ]
+        )
+        payload = {"reply_markup": {"inline_keyboard": keyboard}}
+        if message_id is None:
+            self.send(chat_id, text, **payload)
+        else:
+            self.edit(chat_id, message_id, text, **payload)
+
+    def show_category_place(
+        self, chat_id: int, message_id: int, user_id: int, place_id: int
+    ) -> None:
+        place_row = self.db.get_place(place_id)
+        view = self.category_views.get(user_id)
+        if not place_row or not view:
+            self.show_menu(chat_id, message_id)
+            return
+        place = dict(place_row)
+        parts = [f"<b>{html.escape(place['name'])}</b>"]
+        parts.append(
+            f"📍 {html.escape(COFFEE_AREAS.get(place.get('area'), 'Chiang Mai'))}"
+        )
+        if place.get("rating") is not None:
+            reviews = ""
+            if place.get("reviews"):
+                reviews = f" · {int(place['reviews']):,} reviews".replace(",", " ")
+            parts.append(f"⭐ {place['rating']}{reviews}")
+        if place.get("place_type"):
+            parts.append(html.escape(str(place["place_type"])))
+        if place.get("note"):
+            parts.append(f"\n{html.escape(str(place['note']))}")
+        self.edit(
+            chat_id,
+            message_id,
+            "\n".join(parts),
+            reply_markup={
+                "inline_keyboard": [
+                    [{"text": "📍 Open in Google Maps", "url": place["map_url"]}],
+                    [callback_button("← Back to List", "category_back")],
+                    [
+                        callback_button(
+                            "← Choose Area", f"cat:{view['category_slug']}:0"
+                        )
+                    ],
+                ]
+            },
+        )
+
     def send_search_results(self, chat_id: int, query: str) -> None:
         matches = self.db.search_places(query)
         if not matches:
@@ -623,7 +781,39 @@ class ChiangMaiBot:
             if slug == "coffee":
                 self.show_coffee_menu(chat_id, message_id)
             else:
-                self.show_category(chat_id, message_id, slug, int(raw_index))
+                self.show_category_areas(chat_id, message_id, slug)
+        elif data.startswith("area:"):
+            _, slug, area = data.split(":", 2)
+            if slug not in CATEGORIES or slug == "coffee":
+                self.show_menu(chat_id, message_id)
+                return
+            places = self.db.list_places(slug, None if area == "all" else area)
+            label = CATEGORIES[slug]["label"]
+            area_label = "All Areas" if area == "all" else COFFEE_AREAS.get(area)
+            if area_label is None:
+                self.show_category_areas(chat_id, message_id, slug)
+                return
+            self.show_category_results(
+                chat_id,
+                message_id,
+                user_id,
+                slug,
+                places,
+                f"{label}\n<b>{html.escape(area_label)}</b>",
+            )
+        elif data.startswith("page:"):
+            self.show_category_page(
+                chat_id, message_id, user_id, int(data.split(":", 1)[1])
+            )
+        elif data.startswith("place:"):
+            self.show_category_place(
+                chat_id, message_id, user_id, int(data.split(":", 1)[1])
+            )
+        elif data == "category_back":
+            view = self.category_views.get(user_id, {})
+            self.show_category_page(
+                chat_id, message_id, user_id, int(view.get("page", 0))
+            )
         elif data == "coffee:menu":
             self.show_coffee_menu(chat_id, message_id)
         elif data == "coffee:areas":

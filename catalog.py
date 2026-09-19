@@ -29,6 +29,8 @@ COFFEE_AREAS = {
     "nimman_suthep": "🎨 Nimman & Suthep",
     "santitham_chang_phueak": "🎓 Santitham & Chang Phueak",
     "chang_moi_riverside": "🌊 Chang Moi & Riverside",
+    "south_airport": "✈️ South & Airport",
+    "east_san_kamphaeng": "🌾 East & San Kamphaeng",
     "hang_dong": "🏡 Hang Dong",
     "outside_city": "🌄 Outside Chiang Mai",
 }
@@ -39,7 +41,10 @@ COFFEE_AREA_DESCRIPTIONS = {
     "nimman_suthep": "Trendy & creative",
     "santitham_chang_phueak": "Local & student vibe",
     "chang_moi_riverside": "Riverside & old shophouses",
+    "south_airport": "Markets & local life",
+    "east_san_kamphaeng": "Arts & quiet local spots",
     "hang_dong": "Family & countryside",
+    "outside_city": "Mountains & day trips",
 }
 
 
@@ -49,6 +54,18 @@ COFFEE_AREA_MENU = [
     "santitham_chang_phueak",
     "chang_moi_riverside",
     "hang_dong",
+]
+
+
+AREA_MENU = [
+    "old_city",
+    "nimman_suthep",
+    "santitham_chang_phueak",
+    "chang_moi_riverside",
+    "south_airport",
+    "east_san_kamphaeng",
+    "hang_dong",
+    "outside_city",
 ]
 
 

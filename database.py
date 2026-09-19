@@ -202,17 +202,37 @@ class CatalogDB:
         ).fetchone()
         return int(row["n"])
 
-    def list_places(self, category_slug: str) -> list[sqlite3.Row]:
+    def list_places(
+        self, category_slug: str, area: str | None = None
+    ) -> list[sqlite3.Row]:
+        area_clause = " AND p.area = ?" if area else ""
+        params: list[str] = [category_slug]
+        if area:
+            params.append(area)
         return self.conn.execute(
-            """
+            f"""
             SELECT p.*
             FROM places p
             JOIN place_categories pc ON pc.place_id = p.id
             WHERE p.active = 1 AND pc.category_slug = ?
+            {area_clause}
             ORDER BY COALESCE(p.rating, 0) DESC, COALESCE(p.reviews, 0) DESC, p.name
+            """,
+            params,
+        ).fetchall()
+
+    def category_area_counts(self, category_slug: str) -> dict[str, int]:
+        rows = self.conn.execute(
+            """
+            SELECT p.area, COUNT(*) AS n
+            FROM places p
+            JOIN place_categories pc ON pc.place_id = p.id
+            WHERE p.active = 1 AND pc.category_slug = ? AND p.area IS NOT NULL
+            GROUP BY p.area
             """,
             (category_slug,),
         ).fetchall()
+        return {str(row["area"]): int(row["n"]) for row in rows}
 
     def list_coffee(
         self,
