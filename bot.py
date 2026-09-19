@@ -17,7 +17,15 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from catalog import CATEGORIES, CATEGORY_PARENT, GROUPS, MAIN_MENU
+from catalog import (
+    CATEGORIES,
+    CATEGORY_PARENT,
+    COFFEE_AREA_MENU,
+    COFFEE_AREA_DESCRIPTIONS,
+    COFFEE_AREAS,
+    GROUPS,
+    MAIN_MENU,
+)
 from database import CatalogDB
 
 
@@ -113,6 +121,33 @@ def group_keyboard(db: CatalogDB, group_slug: str) -> dict[str, Any]:
     return {"inline_keyboard": keyboard}
 
 
+def coffee_filter_keyboard() -> dict[str, Any]:
+    return {
+        "inline_keyboard": [
+            [
+                callback_button("📍 By Area", "coffee:areas"),
+                callback_button("🧭 Near Me", "coffee:near"),
+            ],
+            [
+                callback_button("💻 Work-Friendly", "coffee:work"),
+                callback_button("✨ Beautiful Places", "coffee:beautiful"),
+            ],
+            [callback_button("❤️ Favorites", "coffee:favorites")],
+            [callback_button("← Main Menu", "menu")],
+        ]
+    }
+
+
+def coffee_area_keyboard() -> dict[str, Any]:
+    keyboard = [[callback_button("🗺️ All Areas", "coffee_area:all")]]
+    keyboard.extend(
+        [callback_button(COFFEE_AREAS[slug], f"coffee_area:{slug}")]
+        for slug in COFFEE_AREA_MENU
+    )
+    keyboard.append([callback_button("← Coffee Filters", "coffee:menu")])
+    return {"inline_keyboard": keyboard}
+
+
 def back_callback(category_slug: str) -> str:
     parent = CATEGORY_PARENT.get(category_slug)
     return f"group:{parent}" if parent else "menu"
@@ -169,6 +204,7 @@ class ChiangMaiBot:
         self.db = db
         self.admin_user_id = admin_user_id
         self.user_state: dict[int, dict[str, Any]] = {}
+        self.coffee_views: dict[int, dict[str, Any]] = {}
 
     def send(self, chat_id: int, text: str, **kwargs: Any) -> Any:
         return self.api.call(
@@ -208,6 +244,158 @@ class ChiangMaiBot:
             message_id,
             group["title"],
             reply_markup=group_keyboard(self.db, group_slug),
+        )
+
+    def show_coffee_menu(
+        self, chat_id: int, message_id: int | None = None
+    ) -> None:
+        text = (
+            "☕ <b>Coffee in Chiang Mai</b>\n\n"
+            "How would you like to explore?"
+        )
+        payload = {"reply_markup": coffee_filter_keyboard()}
+        if message_id is None:
+            self.send(chat_id, text, **payload)
+        else:
+            self.edit(chat_id, message_id, text, **payload)
+
+    def show_coffee_areas(self, chat_id: int, message_id: int) -> None:
+        area_guide = "\n".join(
+            f"{COFFEE_AREAS[slug]} — {COFFEE_AREA_DESCRIPTIONS[slug]}"
+            for slug in COFFEE_AREA_MENU
+        )
+        self.edit(
+            chat_id,
+            message_id,
+            "📍 <b>Coffee by Area</b>\n\n"
+            f"{area_guide}\n\nChoose a part of Chiang Mai:",
+            reply_markup=coffee_area_keyboard(),
+        )
+
+    @staticmethod
+    def coffee_row_text(place: Any) -> str:
+        area = COFFEE_AREAS.get(place.get("area"), "Chiang Mai")
+        rating = f" · {place['rating']}★" if place.get("rating") is not None else ""
+        distance = ""
+        if place.get("distance_km") is not None:
+            km = float(place["distance_km"])
+            distance = f" · {int(km * 1000)} m" if km < 1 else f" · {km:.1f} km"
+        value = f"{place['name']} · {area}{rating}{distance}"
+        return value if len(value) <= 62 else value[:59].rstrip() + "…"
+
+    def show_coffee_results(
+        self,
+        chat_id: int,
+        message_id: int | None,
+        user_id: int,
+        places: list[Any],
+        title: str,
+        *,
+        back_callback: str = "coffee:menu",
+        page: int = 0,
+    ) -> None:
+        normalized = [dict(place) for place in places]
+        self.coffee_views[user_id] = {
+            "places": normalized,
+            "title": title,
+            "back_callback": back_callback,
+        }
+        self.show_coffee_page(chat_id, message_id, user_id, page)
+
+    def show_coffee_page(
+        self, chat_id: int, message_id: int | None, user_id: int, page: int
+    ) -> None:
+        view = self.coffee_views.get(user_id)
+        if not view:
+            self.show_coffee_menu(chat_id, message_id)
+            return
+        places = view["places"]
+        page_size = 8
+        total_pages = max(1, (len(places) + page_size - 1) // page_size)
+        page = max(0, min(page, total_pages - 1))
+        start = page * page_size
+        visible = places[start : start + page_size]
+        if visible:
+            keyboard = [
+                [callback_button(self.coffee_row_text(place), f"coffee_place:{place['id']}")]
+                for place in visible
+            ]
+            navigation: list[dict[str, str]] = []
+            if page > 0:
+                navigation.append(callback_button("← Previous", f"coffee_page:{page - 1}"))
+            if page + 1 < total_pages:
+                navigation.append(callback_button("Next →", f"coffee_page:{page + 1}"))
+            if navigation:
+                keyboard.append(navigation)
+            keyboard.append(
+                [callback_button("← Back", str(view["back_callback"]))]
+            )
+            text = (
+                f"{view['title']}\n\n"
+                "Tap a place to see details and open it in Google Maps."
+            )
+            if total_pages > 1:
+                text += f"\n\n<i>Page {page + 1} of {total_pages}</i>"
+        else:
+            keyboard = [
+                [callback_button("← Back", str(view["back_callback"]))]
+            ]
+            text = f"{view['title']}\n\nNo places here yet."
+        payload = {"reply_markup": {"inline_keyboard": keyboard}}
+        if message_id is None:
+            self.send(chat_id, text, **payload)
+        else:
+            self.edit(chat_id, message_id, text, **payload)
+
+    def show_coffee_place(
+        self, chat_id: int, message_id: int, user_id: int, place_id: int
+    ) -> None:
+        place_row = self.db.get_place(place_id)
+        if not place_row:
+            self.show_coffee_menu(chat_id, message_id)
+            return
+        place = dict(place_row)
+        view = self.coffee_views.get(user_id, {})
+        for item in view.get("places", []):
+            if int(item["id"]) == place_id and item.get("distance_km") is not None:
+                place["distance_km"] = item["distance_km"]
+                break
+        parts = [f"<b>{html.escape(place['name'])}</b>"]
+        parts.append(f"📍 {html.escape(COFFEE_AREAS.get(place.get('area'), 'Chiang Mai'))}")
+        if place.get("rating") is not None:
+            reviews = ""
+            if place.get("reviews"):
+                reviews = f" · {int(place['reviews']):,} reviews".replace(",", " ")
+            parts.append(f"⭐ {place['rating']}{reviews}")
+        if place.get("place_type"):
+            parts.append(html.escape(str(place["place_type"])))
+        tags = []
+        if place.get("work_friendly"):
+            tags.append("💻 Work-Friendly")
+        if place.get("beautiful"):
+            tags.append("✨ Beautiful Place")
+        if tags:
+            parts.append(" · ".join(tags))
+        if place.get("distance_km") is not None:
+            km = float(place["distance_km"])
+            distance = f"{int(km * 1000)} m" if km < 1 else f"{km:.1f} km"
+            parts.append(f"🧭 {distance} away")
+        if place.get("note"):
+            parts.append(f"\n{html.escape(str(place['note']))}")
+        favorite = self.db.is_favorite(user_id, place_id)
+        favorite_label = "💔 Remove from Favorites" if favorite else "❤️ Save to Favorites"
+        self.edit(
+            chat_id,
+            message_id,
+            "\n".join(parts),
+            reply_markup={
+                "inline_keyboard": [
+                    [{"text": "📍 Open in Google Maps", "url": place["map_url"]}],
+                    [callback_button(favorite_label, f"coffee_fav:{place_id}")],
+                    [callback_button("← Back to Coffee List", "coffee_back")],
+                    [callback_button("☕ Coffee Filters", "coffee:menu")],
+                ]
+            },
         )
 
     def show_category(
@@ -338,8 +526,36 @@ class ChiangMaiBot:
     def handle_message(self, message: dict[str, Any]) -> None:
         chat_id = message["chat"]["id"]
         user_id = message.get("from", {}).get("id", chat_id)
+        location = message.get("location")
+        if location and self.user_state.get(user_id, {}).get("mode") == "coffee_location":
+            self.user_state.pop(user_id, None)
+            places = self.db.nearest_coffee(
+                float(location["latitude"]), float(location["longitude"])
+            )
+            self.send(
+                chat_id,
+                "Location received ✅",
+                reply_markup={"remove_keyboard": True},
+            )
+            self.show_coffee_results(
+                chat_id,
+                None,
+                user_id,
+                places,
+                "🧭 <b>Coffee Near You</b>",
+            )
+            return
         text = (message.get("text") or "").strip()
         if not text:
+            return
+        if text == "Cancel" and self.user_state.get(user_id, {}).get("mode") == "coffee_location":
+            self.user_state.pop(user_id, None)
+            self.send(
+                chat_id,
+                "Location request cancelled.",
+                reply_markup={"remove_keyboard": True},
+            )
+            self.show_coffee_menu(chat_id)
             return
         if text == "/cancel":
             self.user_state.pop(user_id, None)
@@ -404,7 +620,86 @@ class ChiangMaiBot:
             self.show_group(chat_id, message_id, data.split(":", 1)[1])
         elif data.startswith("cat:"):
             _, slug, raw_index = data.split(":", 2)
-            self.show_category(chat_id, message_id, slug, int(raw_index))
+            if slug == "coffee":
+                self.show_coffee_menu(chat_id, message_id)
+            else:
+                self.show_category(chat_id, message_id, slug, int(raw_index))
+        elif data == "coffee:menu":
+            self.show_coffee_menu(chat_id, message_id)
+        elif data == "coffee:areas":
+            self.show_coffee_areas(chat_id, message_id)
+        elif data.startswith("coffee_area:"):
+            area = data.split(":", 1)[1]
+            if area == "all":
+                places = self.db.list_coffee()
+                title = "☕ <b>All Coffee Places</b>"
+            elif area in COFFEE_AREA_MENU:
+                places = self.db.list_coffee(area=area)
+                title = f"📍 <b>{html.escape(COFFEE_AREAS[area])}</b>"
+            else:
+                self.show_coffee_areas(chat_id, message_id)
+                return
+            self.show_coffee_results(
+                chat_id,
+                message_id,
+                user_id,
+                places,
+                title,
+                back_callback="coffee:areas",
+            )
+        elif data == "coffee:work":
+            self.show_coffee_results(
+                chat_id,
+                message_id,
+                user_id,
+                self.db.list_coffee(work_friendly=True),
+                "💻 <b>Work-Friendly Coffee Places</b>",
+            )
+        elif data == "coffee:beautiful":
+            self.show_coffee_results(
+                chat_id,
+                message_id,
+                user_id,
+                self.db.list_coffee(beautiful=True),
+                "✨ <b>Beautiful Coffee Places</b>",
+            )
+        elif data == "coffee:favorites":
+            self.show_coffee_results(
+                chat_id,
+                message_id,
+                user_id,
+                self.db.list_coffee(favorite_user_id=user_id),
+                "❤️ <b>Your Favorite Coffee Places</b>",
+            )
+        elif data == "coffee:near":
+            self.user_state[user_id] = {"mode": "coffee_location"}
+            self.send(
+                chat_id,
+                "To find the closest coffee places, tap the button below and "
+                "share your current location. It is used only for this search.",
+                reply_markup={
+                    "keyboard": [
+                        [{"text": "📍 Share My Location", "request_location": True}],
+                        [{"text": "Cancel"}],
+                    ],
+                    "resize_keyboard": True,
+                    "one_time_keyboard": True,
+                },
+            )
+        elif data.startswith("coffee_page:"):
+            self.show_coffee_page(
+                chat_id, message_id, user_id, int(data.split(":", 1)[1])
+            )
+        elif data.startswith("coffee_place:"):
+            self.show_coffee_place(
+                chat_id, message_id, user_id, int(data.split(":", 1)[1])
+            )
+        elif data.startswith("coffee_fav:"):
+            place_id = int(data.split(":", 1)[1])
+            self.db.toggle_favorite(user_id, place_id)
+            self.show_coffee_place(chat_id, message_id, user_id, place_id)
+        elif data == "coffee_back":
+            self.show_coffee_page(chat_id, message_id, user_id, 0)
         elif data.startswith("one:"):
             self.show_single_place(chat_id, message_id, int(data.split(":", 1)[1]))
         elif data.startswith("ac:"):

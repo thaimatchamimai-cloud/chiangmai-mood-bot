@@ -24,6 +24,34 @@ CATEGORIES = {
 }
 
 
+COFFEE_AREAS = {
+    "old_city": "🛕 Old City",
+    "nimman_suthep": "🎨 Nimman & Suthep",
+    "santitham_chang_phueak": "🎓 Santitham & Chang Phueak",
+    "chang_moi_riverside": "🌊 Chang Moi & Riverside",
+    "hang_dong": "🏡 Hang Dong",
+    "outside_city": "🌄 Outside Chiang Mai",
+}
+
+
+COFFEE_AREA_DESCRIPTIONS = {
+    "old_city": "Temples & history",
+    "nimman_suthep": "Trendy & creative",
+    "santitham_chang_phueak": "Local & student vibe",
+    "chang_moi_riverside": "Riverside & old shophouses",
+    "hang_dong": "Family & countryside",
+}
+
+
+COFFEE_AREA_MENU = [
+    "old_city",
+    "nimman_suthep",
+    "santitham_chang_phueak",
+    "chang_moi_riverside",
+    "hang_dong",
+]
+
+
 GROUPS = {
     "food": {
         "label": "🍽 Food",
