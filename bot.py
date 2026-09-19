@@ -177,6 +177,15 @@ def category_area_keyboard(
     return {"inline_keyboard": keyboard}
 
 
+def admin_area_keyboard() -> dict[str, Any]:
+    return {
+        "inline_keyboard": [
+            [callback_button(COFFEE_AREAS[area], f"aa:{area}")]
+            for area in AREA_MENU
+        ]
+    }
+
+
 def back_callback(category_slug: str) -> str:
     parent = CATEGORY_PARENT.get(category_slug)
     return f"group:{parent}" if parent else "menu"
@@ -670,6 +679,7 @@ class ChiangMaiBot:
                 name=state["name"],
                 category_slug=state["category"],
                 map_url=state["link"],
+                area=state["area"],
                 note=note,
             )
             self.user_state.pop(user_id, None)
@@ -902,6 +912,22 @@ class ChiangMaiBot:
             if slug not in CATEGORIES:
                 return
             state["category"] = slug
+            state["stage"] = "area"
+            self.send(
+                chat_id,
+                "Choose an area:",
+                reply_markup=admin_area_keyboard(),
+            )
+        elif data.startswith("aa:"):
+            if not self.is_admin(user_id):
+                return
+            state = self.user_state.get(user_id)
+            if not state or state.get("mode") != "add" or state.get("stage") != "area":
+                return
+            area = data.split(":", 1)[1]
+            if area not in AREA_MENU:
+                return
+            state["area"] = area
             state["stage"] = "note"
             self.send(
                 chat_id,

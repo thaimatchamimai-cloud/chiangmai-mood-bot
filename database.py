@@ -373,6 +373,7 @@ class CatalogDB:
         name: str,
         category_slug: str,
         map_url: str,
+        area: str,
         note: str | None = None,
         source: str = "telegram_admin",
     ) -> int:
@@ -381,17 +382,18 @@ class CatalogDB:
         normalized = normalize_name(name)
         self.conn.execute(
             """
-            INSERT INTO places(name, normalized_name, map_url, note, source)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO places(name, normalized_name, map_url, note, area, source)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(normalized_name) DO UPDATE SET
                 map_url = excluded.map_url,
+                area = excluded.area,
                 note = CASE
                     WHEN excluded.note IS NULL OR excluded.note = '' THEN places.note
                     ELSE excluded.note
                 END,
                 active = 1
             """,
-            (name.strip(), normalized, map_url, note, source),
+            (name.strip(), normalized, map_url, note, area, source),
         )
         row = self.conn.execute(
             "SELECT id FROM places WHERE normalized_name = ?", (normalized,)
